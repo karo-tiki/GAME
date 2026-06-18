@@ -100,7 +100,7 @@ defmodule BombPartyQuiz.Sala do
 
   @impl true
   def handle_call({"crear", nombre_anfitrion, tematica}, _from, sala) do
-    jugador = nuevo_jugador(nombre_anfitrion)
+    jugador = nuevo_jugador(nombre_anfitrion, 1)
     sala = %{sala | anfitrion: nombre_anfitrion, tematica: tematica, jugadores: [jugador]}
     {:reply, {:ok, sala}, sala}
   end
@@ -117,7 +117,8 @@ defmodule BombPartyQuiz.Sala do
         {:reply, {:error, "nombre_en_uso"}, sala}
 
       true ->
-        jugador = nuevo_jugador(nombre_jugador)
+        posicion = length(sala.jugadores) + 1
+        jugador = nuevo_jugador(nombre_jugador, posicion)
         sala = %{sala | jugadores: sala.jugadores ++ [jugador]}
         anunciar(sala, {"jugadores_actualizados", sala})
         {:reply, {:ok, sala}, sala}
@@ -196,7 +197,7 @@ defmodule BombPartyQuiz.Sala do
   # JUGADOR — estructura base
   # ============================================================
 
-  defp nuevo_jugador(nombre) do
+  defp nuevo_jugador(nombre, posicion) do
     %{
       nombre: nombre,
       vidas: @vidas_iniciales,
@@ -205,7 +206,8 @@ defmodule BombPartyQuiz.Sala do
       racha: 0,
       poderes: [],
       escudo_activo: false,
-      bono_tiempo_propio: 0
+      bono_tiempo_propio: 0,
+      avatar: "/images/gato#{posicion}.jpeg"
     }
   end
 

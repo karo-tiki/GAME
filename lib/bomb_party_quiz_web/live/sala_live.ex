@@ -94,57 +94,81 @@ defmodule BombPartyQuizWeb.SalaLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-gradient-to-b from-black via-neutral-900 to-red-950 flex items-center justify-center px-4">
-      <div class="w-full max-w-md">
-        <div class="text-center mb-6">
-          <p class="text-neutral-400 text-sm">Código de la sala</p>
-          <p class="text-4xl font-black text-white font-mono tracking-widest">{@sala.codigo}</p>
-          <p class="text-neutral-500 text-xs mt-1">Compártelo con los demás jugadores</p>
+    <div class="min-h-screen bg-neutral-950 flex items-center justify-center px-4 py-8">
+      <div class="w-full max-w-lg">
+
+        <div class="text-center mb-8">
+          <p class="text-neutral-500 text-sm uppercase tracking-widest mb-1">Sala de espera</p>
+          <div class="inline-flex items-center gap-3 bg-neutral-900 border border-neutral-700 rounded-2xl px-6 py-3">
+            <span class="text-neutral-400 text-sm">Codigo:</span>
+            <span class="text-3xl font-black text-white font-mono tracking-widest">{@sala.codigo}</span>
+          </div>
+          <p class="text-neutral-600 text-xs mt-2">Comparte este codigo con los demas jugadores</p>
         </div>
 
-        <div class="bg-neutral-900/80 border border-red-900/50 rounded-2xl p-6 shadow-2xl shadow-red-950/50">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-white font-bold">Jugadores</h2>
-            <span class="text-sm text-neutral-400">
-              {length(@sala.jugadores)} / {@maximo}
-            </span>
+        <div class="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl mb-4">
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="text-white font-bold text-lg">Jugadores</h2>
+            <div class="flex items-center gap-1">
+              <span class="text-orange-400 font-bold">{length(@sala.jugadores)}</span>
+              <span class="text-neutral-500">/</span>
+              <span class="text-neutral-400">{@maximo}</span>
+            </div>
           </div>
 
-          <ul class="space-y-2 mb-6">
-            <li
+          <div class="grid grid-cols-2 gap-3 mb-6">
+            <div
               :for={jugador <- @sala.jugadores}
-              class="flex items-center justify-between bg-neutral-800 rounded-lg px-4 py-2"
+              class="flex items-center gap-3 bg-neutral-800 rounded-2xl p-3 border border-neutral-700"
             >
-              <span class="text-white font-medium">
-                {jugador.nombre}
-                <span :if={jugador.nombre == @sala.anfitrion} class="text-red-400 text-xs ml-1">
-                  (anfitrión)
-                </span>
-              </span>
-              <span class="text-green-400 text-xs">●conectado</span>
-            </li>
-          </ul>
+              <img
+                src={jugador.avatar}
+                alt={jugador.nombre}
+                class="w-12 h-12 rounded-full object-cover border-2 border-orange-400/50"
+              />
+              <div class="min-w-0">
+                <p class="text-white font-semibold text-sm truncate">{jugador.nombre}</p>
+                <p :if={jugador.nombre == @sala.anfitrion} class="text-orange-400 text-xs">
+                  anfitrion
+                </p>
+                <p :if={jugador.nombre != @sala.anfitrion} class="text-green-400 text-xs">
+                  conectado
+                </p>
+              </div>
+            </div>
 
-          <div class="text-center text-sm text-neutral-400 mb-4">
-            Temática: <span class="text-white font-semibold">{nombre_tematica(@sala.tematica)}</span>
+            <div
+              :for={_n <- 1..(@maximo - length(@sala.jugadores))}
+              class="flex items-center gap-3 bg-neutral-800/40 rounded-2xl p-3 border border-neutral-800 border-dashed"
+            >
+              <div class="w-12 h-12 rounded-full bg-neutral-700/40 flex items-center justify-center">
+                <span class="text-neutral-600 text-xl">?</span>
+              </div>
+              <p class="text-neutral-600 text-sm">Esperando...</p>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-center gap-2 mb-5 bg-neutral-800/50 rounded-xl py-2 px-4">
+            <span class="text-neutral-400 text-sm">Tematica:</span>
+            <span class="text-white font-semibold text-sm">{nombre_tematica(@sala.tematica)}</span>
           </div>
 
           <%= if @nombre == @sala.anfitrion do %>
             <button
               phx-click="iniciar_partida"
               disabled={length(@sala.jugadores) < @minimo}
-              class="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 disabled:bg-neutral-700 disabled:text-neutral-500 text-white font-bold text-lg transition"
+              class="w-full py-4 rounded-2xl bg-orange-500 hover:bg-orange-400 disabled:bg-neutral-700 disabled:text-neutral-500 text-neutral-950 font-black text-lg transition"
             >
               <%= if length(@sala.jugadores) < @minimo do %>
-                Esperando jugadores ({@minimo - length(@sala.jugadores)} más)
+                Esperando jugadores ({@minimo - length(@sala.jugadores)} mas)
               <% else %>
-                Iniciar partida 💣
+                Iniciar partida
               <% end %>
             </button>
           <% else %>
-            <p class="text-center text-neutral-400 text-sm">
-              Esperando a que el anfitrión inicie la partida...
-            </p>
+            <div class="text-center py-3">
+              <p class="text-neutral-400 text-sm">Esperando al anfitrion...</p>
+            </div>
           <% end %>
         </div>
       </div>
@@ -152,7 +176,7 @@ defmodule BombPartyQuizWeb.SalaLive do
     """
   end
 
-  defp nombre_tematica("matematica"), do: "Matemática"
+  defp nombre_tematica("matematica"), do: "Matematica"
   defp nombre_tematica("cultura_general"), do: "Cultura General"
-  defp nombre_tematica("programacion"), do: "Lenguajes de Programación"
+  defp nombre_tematica("programacion"), do: "Lenguajes de Programacion"
 end

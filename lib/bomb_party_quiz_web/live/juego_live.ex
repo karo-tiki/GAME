@@ -125,11 +125,8 @@ defmodule BombPartyQuizWeb.JuegoLive do
     {:noreply, assign(socket, :flash_resultado, {"poder_usado", mensaje})}
   end
 
-  # El timer del servidor se reprogramo con +5s; sincronizamos el contador
-  # visual al instante para que la barra y el numero salten de inmediato.
   def handle_info({"tiempo_extendido", jugador, sala}, socket) do
     mensaje = "#{jugador} congelo el tiempo: +5 segundos"
-
     {:noreply,
      socket
      |> assign(:sala, sala)
@@ -146,115 +143,154 @@ defmodule BombPartyQuizWeb.JuegoLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-gradient-to-b from-black via-neutral-900 to-red-950 px-4 py-6">
-      <div class="max-w-2xl mx-auto">
-        <%= if @sala.estado == "finalizado" do %>
-          {render_fin(assigns)}
-        <% else %>
-          {render_juego(assigns)}
-        <% end %>
-      </div>
-    </div>
+    <%= if @sala.estado == "finalizado" do %>
+      {render_fin(assigns)}
+    <% else %>
+      {render_juego(assigns)}
+    <% end %>
     """
   end
 
   defp render_fin(assigns) do
     ~H"""
-    <div class="text-center py-20">
-      <p class="text-6xl mb-4">*</p>
-      <%= if @sala.ganador do %>
-        <h1 class="text-4xl font-black text-white">
-          Ganador: <span class="text-yellow-400">{@sala.ganador}</span>
-        </h1>
-      <% else %>
-        <h1 class="text-3xl font-black text-white">La partida termino sin ganador</h1>
-      <% end %>
-      <div class="mt-8 max-w-sm mx-auto bg-neutral-900/80 border border-neutral-800 rounded-xl p-4">
-        <p class="text-neutral-400 text-sm mb-2">Marcador final</p>
-        <div :for={j <- Enum.sort_by(@sala.jugadores, & -&1.puntos)} class="flex justify-between text-white py-1">
-          <span>{j.nombre}</span>
-          <span class="font-bold">{j.puntos} pts</span>
+    <div class="min-h-screen bg-neutral-950 flex items-center justify-center px-4"
+         style={"background-image: url('#{fondo_tematica(@sala.tematica)}'); background-size: cover; background-position: center;"}>
+      <div class="bg-green-900/90 border-4 border-green-700 rounded-2xl p-10 text-center max-w-md w-full shadow-2xl">
+        <p class="text-5xl mb-4">🏆</p>
+        <%= if @sala.ganador do %>
+          <h1 class="text-3xl font-black text-white mb-2">
+            Ganador: <span class="text-yellow-300">{@sala.ganador}</span>
+          </h1>
+        <% else %>
+          <h1 class="text-2xl font-black text-white">La partida termino sin ganador</h1>
+        <% end %>
+        <div class="mt-6 bg-green-950/80 rounded-xl p-4">
+          <p class="text-green-300 text-sm mb-3 font-bold">Marcador final</p>
+          <div :for={j <- Enum.sort_by(@sala.jugadores, & -&1.puntos)} class="flex items-center gap-3 py-2 border-b border-green-800/50 last:border-0">
+            <img src={j.avatar} class="w-8 h-8 rounded-full object-cover" />
+            <span class="text-white flex-1 text-left">{j.nombre}</span>
+            <span class="text-yellow-300 font-bold">{j.puntos} pts</span>
+          </div>
         </div>
+        <a href="/" class="inline-block mt-6 px-6 py-3 rounded-xl bg-orange-500 hover:bg-orange-400 text-neutral-950 font-bold transition">
+          Volver al inicio
+        </a>
       </div>
-      <a href="/" class="inline-block mt-8 px-6 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition">
-        Volver al inicio
-      </a>
     </div>
     """
   end
 
   defp render_juego(assigns) do
     ~H"""
-    <div>
-      <div :if={@evento_anuncio} class="text-center mb-4 bg-purple-900/60 border border-purple-500 rounded-xl py-2 px-4">
-        <p class="text-purple-200 font-bold text-sm">{texto_evento(@evento_anuncio)}</p>
+    <div class="relative w-full overflow-hidden"
+         style={"min-height: 100vh; background-image: url('#{fondo_tematica(@sala.tematica)}'); background-size: cover; background-position: center top;"}>
+
+      <!-- Evento de ronda (banner arriba) -->
+      <div :if={@evento_anuncio} class="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-purple-900/90 border border-purple-400 rounded-xl px-6 py-2 text-purple-100 font-bold text-sm shadow-lg">
+        {texto_evento(@evento_anuncio)}
       </div>
 
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <div
-          :for={jugador <- @sala.jugadores}
-          class={[
-            "rounded-xl p-3 text-center border transition",
-            jugador.nombre == @sala.jugador_con_bomba && "border-red-500 bg-red-950/60 scale-105",
-            jugador.nombre != @sala.jugador_con_bomba && "border-neutral-800 bg-neutral-900/60",
-            jugador.vidas == 0 && "opacity-40"
-          ]}
-        >
-          <p class="text-white font-semibold text-sm truncate">
-            {jugador.nombre}
-            <span :if={jugador.nombre == @sala.jugador_con_bomba}>(bomba)</span>
-          </p>
-          <p class="text-lg mt-1">
-            <%= for n <- 1..3 do %>
-              <%= if n <= jugador.vidas do %>
-                [v]
-              <% else %>
-                [x]
-              <% end %>
-            <% end %>
-          </p>
-          <p class="text-yellow-400 text-xs font-bold mt-1">{jugador.puntos} pts</p>
-          <p :if={jugador.racha > 0} class="text-orange-400 text-xs mt-1">racha x{jugador.racha}</p>
-          <p :if={jugador.escudo_activo} class="text-cyan-300 text-xs mt-1">escudo activo</p>
+      <!-- PIZARRA: posicionada encima de la pizarra real de la imagen -->
+      <!-- La pizarra esta aprox en el centro superior de la imagen -->
+      <div class="absolute z-20"
+           style="top: 3%; left: 22%; width: 56%; min-height: 52%;">
 
-          <div :if={jugador.poderes != []} class="flex justify-center gap-1 mt-2 flex-wrap">
-            <button
-              :for={poder <- jugador.poderes}
-              type="button"
-              disabled={jugador.nombre != @nombre or jugador.nombre != @sala.jugador_con_bomba}
-              phx-click="click_poder"
-              phx-value-poder={poder}
-              class={[
-                "text-xs px-2 py-1 rounded-lg border",
-                jugador.nombre == @nombre and jugador.nombre == @sala.jugador_con_bomba &&
-                  "bg-purple-700 border-purple-400 text-white cursor-pointer hover:bg-purple-600",
-                not (jugador.nombre == @nombre and jugador.nombre == @sala.jugador_con_bomba) &&
-                  "bg-neutral-800 border-neutral-700 text-neutral-400 cursor-not-allowed"
-              ]}
-              title={nombre_poder(poder)}
-            >
-              {icono_poder(poder)}
-            </button>
+        <!-- Contenido de la pizarra: pregunta, timer, opciones -->
+        <div class="w-full h-full bg-green-900/30 rounded-lg p-4 flex flex-col items-center justify-start">
+
+          <!-- Flash de resultado -->
+          <div :if={@flash_resultado} class="w-full mb-2">
+            <%= case @flash_resultado do %>
+              <% {"correcta", jugador} -> %>
+                <p class="text-green-300 font-bold text-center text-sm drop-shadow">
+                  {jugador} respondio correctamente
+                </p>
+              <% {"incorrecta", jugador} -> %>
+                <p class="text-red-300 font-bold text-center text-sm drop-shadow">
+                  {jugador} fallo y perdio una vida
+                </p>
+              <% {"poder_ganado", mensaje} -> %>
+                <p class="text-purple-200 font-bold text-center text-sm drop-shadow">{mensaje}</p>
+              <% {"poder_usado", mensaje} -> %>
+                <p class="text-cyan-200 font-bold text-center text-sm drop-shadow">{mensaje}</p>
+            <% end %>
           </div>
-          <p :if={jugador.vidas == 0} class="text-xs text-neutral-500 mt-1">espectador</p>
+
+          <%= if @sala.pregunta_actual do %>
+            <!-- Quien tiene la bomba -->
+            <p class="text-green-200/80 text-xs mb-1 drop-shadow">Le toca a</p>
+            <p class="text-white font-black text-lg drop-shadow mb-3">
+              {@sala.jugador_con_bomba}
+            </p>
+
+            <!-- Timer: numero + barra -->
+            <div class="w-full mb-3">
+              <p class={[
+                "text-center text-3xl font-black mb-1 drop-shadow",
+                @tiempo_restante <= 3 && "text-red-300 animate-pulse",
+                @tiempo_restante > 3 && "text-white"
+              ]}>
+                {@tiempo_restante}s
+              </p>
+              <div class="w-full h-2 bg-green-950/60 rounded-full overflow-hidden">
+                <div
+                  class={[
+                    "h-full transition-all duration-1000 ease-linear rounded-full",
+                    @tiempo_restante <= 3 && "bg-red-400",
+                    @tiempo_restante > 3 && "bg-yellow-300"
+                  ]}
+                  style={"width: #{porcentaje_tiempo(@tiempo_restante, @sala.pregunta_actual)}%"}
+                >
+                </div>
+              </div>
+            </div>
+
+            <!-- Pregunta -->
+            <p class="text-white font-bold text-center text-base drop-shadow mb-4 leading-snug px-2">
+              {@sala.pregunta_actual["pregunta"]}
+            </p>
+
+            <!-- Opciones o campo de texto -->
+            <%= if @nombre == @sala.jugador_con_bomba do %>
+              <%= if @sala.pregunta_actual["tipo"] == "seleccion" do %>
+                <div class="grid grid-cols-2 gap-2 w-full">
+                  <button
+                    :for={opcion <- @sala.pregunta_actual["opciones"]}
+                    phx-click="elegir_opcion"
+                    phx-value-opcion={opcion}
+                    class="py-2 px-3 rounded-lg bg-white/20 hover:bg-white/40 text-white font-semibold text-sm transition border border-white/30 drop-shadow"
+                  >
+                    {opcion}
+                  </button>
+                </div>
+              <% else %>
+                <form phx-submit="enviar_respuesta" phx-change="actualizar_respuesta" class="flex gap-2 w-full">
+                  <input
+                    type="text"
+                    name="respuesta"
+                    value={@respuesta}
+                    autocomplete="off"
+                    autofocus
+                    placeholder="Escribe tu respuesta..."
+                    class="flex-1 px-3 py-2 rounded-lg bg-white/20 text-white placeholder-white/50 border border-white/30 outline-none text-sm"
+                  />
+                  <button type="submit" class="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white font-bold text-sm transition">
+                    Enviar
+                  </button>
+                </form>
+              <% end %>
+            <% else %>
+              <p class="text-green-200/70 text-sm text-center drop-shadow">
+                {@sala.jugador_con_bomba} esta respondiendo...
+              </p>
+            <% end %>
+          <% end %>
         </div>
       </div>
 
-      <div :if={@flash_resultado} class="text-center mb-4">
-        <%= case @flash_resultado do %>
-          <% {"correcta", jugador} -> %>
-            <p class="text-green-400 font-bold">{jugador} respondio correctamente</p>
-          <% {"incorrecta", jugador} -> %>
-            <p class="text-red-400 font-bold">{jugador} fallo y perdio una vida</p>
-          <% {"poder_ganado", mensaje} -> %>
-            <p class="text-purple-300 font-bold">{mensaje}</p>
-          <% {"poder_usado", mensaje} -> %>
-            <p class="text-cyan-300 font-bold">{mensaje}</p>
-        <% end %>
-      </div>
-
-      <div :if={@poder_seleccionado} class="bg-purple-950/80 border border-purple-500 rounded-2xl p-4 mb-4">
-        <p class="text-purple-200 text-sm text-center mb-3">
+      <!-- Selector de objetivo para poderes -->
+      <div :if={@poder_seleccionado} class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-purple-950/95 border border-purple-500 rounded-2xl p-5 w-72 shadow-2xl">
+        <p class="text-purple-200 text-sm text-center mb-3 font-bold">
           {texto_seleccion(@poder_seleccionado)}
         </p>
         <div class="grid grid-cols-2 gap-2">
@@ -262,86 +298,81 @@ defmodule BombPartyQuizWeb.JuegoLive do
             :for={j <- otros_jugadores_activos(@sala, @nombre)}
             phx-click="elegir_objetivo"
             phx-value-objetivo={j.nombre}
-            class="py-2 px-3 rounded-lg bg-purple-800 hover:bg-purple-700 text-white text-sm font-semibold"
+            class="flex items-center gap-2 py-2 px-3 rounded-lg bg-purple-800 hover:bg-purple-700 text-white text-sm font-semibold"
           >
+            <img src={j.avatar} class="w-7 h-7 rounded-full object-cover" />
             {j.nombre}
           </button>
         </div>
-        <button phx-click="cancelar_seleccion_poder" class="w-full mt-2 py-1 text-purple-300 text-xs hover:text-white">
+        <button phx-click="cancelar_seleccion_poder" class="w-full mt-3 py-1 text-purple-300 text-xs hover:text-white">
           Cancelar
         </button>
       </div>
 
-      <div class="bg-neutral-900/80 border border-red-900/50 rounded-2xl p-6 shadow-2xl shadow-red-950/50">
-        <%= if @sala.pregunta_actual do %>
-          <div class="text-center mb-4">
-            <p class="text-neutral-400 text-sm">Le toca a</p>
-            <p class="text-2xl font-black text-white">{@sala.jugador_con_bomba}</p>
-          </div>
-
-          <div class="mb-6">
-            <p class={[
-              "text-center text-4xl font-black mb-2",
-              @tiempo_restante <= 2 && "text-red-500 animate-pulse",
-              @tiempo_restante > 2 && "text-white"
-            ]}>
-              {@tiempo_restante}s
-            </p>
-            <div class="w-full h-3 bg-neutral-800 rounded-full overflow-hidden">
-              <div
-                class={[
-                  "h-full transition-all duration-1000 ease-linear",
-                  @tiempo_restante <= 2 && "bg-red-500",
-                  @tiempo_restante > 2 && "bg-orange-500"
-                ]}
-                style={"width: #{porcentaje_tiempo(@tiempo_restante, @sala.pregunta_actual)}%"}
-              >
-              </div>
+      <!-- BARRA DE JUGADORES en la parte inferior -->
+      <div class="absolute bottom-0 left-0 right-0 z-20 p-3"
+           style="background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 70%, transparent 100%);">
+        <div class="max-w-4xl mx-auto grid grid-cols-4 gap-3">
+          <div
+            :for={jugador <- @sala.jugadores}
+            class={[
+              "rounded-2xl p-2 text-center border-2 transition",
+              jugador.nombre == @sala.jugador_con_bomba && "border-orange-400 bg-orange-900/60 scale-105",
+              jugador.nombre != @sala.jugador_con_bomba && "border-neutral-700/50 bg-neutral-900/60",
+              jugador.vidas == 0 && "opacity-40"
+            ]}
+          >
+            <div class="relative inline-block">
+              <img
+                src={jugador.avatar}
+                alt={jugador.nombre}
+                class="w-12 h-12 rounded-full object-cover mx-auto border-2 border-white/20"
+              />
+              <span :if={jugador.nombre == @sala.jugador_con_bomba}
+                class="absolute -top-1 -right-1 text-sm">💣</span>
             </div>
-          </div>
-
-          <p class="text-xl text-white text-center font-semibold mb-6">
-            {@sala.pregunta_actual["pregunta"]}
-          </p>
-
-          <%= if @nombre == @sala.jugador_con_bomba do %>
-            <%= if @sala.pregunta_actual["tipo"] == "seleccion" do %>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  :for={opcion <- @sala.pregunta_actual["opciones"]}
-                  phx-click="elegir_opcion"
-                  phx-value-opcion={opcion}
-                  class="py-3 px-4 rounded-xl bg-neutral-800 hover:bg-red-700 text-white font-semibold transition border border-neutral-700"
-                >
-                  {opcion}
-                </button>
-              </div>
-            <% else %>
-              <form phx-submit="enviar_respuesta" phx-change="actualizar_respuesta" class="flex gap-2">
-                <input
-                  type="text"
-                  name="respuesta"
-                  value={@respuesta}
-                  autocomplete="off"
-                  autofocus
-                  placeholder="Escribe tu respuesta..."
-                  class="flex-1 px-4 py-3 rounded-xl bg-neutral-800 text-white border border-neutral-700 focus:border-red-500 outline-none"
-                />
-                <button type="submit" class="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition">
-                  Enviar
-                </button>
-              </form>
-            <% end %>
-          <% else %>
-            <p class="text-center text-neutral-500 text-sm">
-              {@sala.jugador_con_bomba} esta respondiendo...
+            <p class="text-white font-semibold text-xs truncate mt-1">{jugador.nombre}</p>
+            <p class="text-sm mt-0.5">
+              <%= for n <- 1..3 do %>
+                <%= if n <= jugador.vidas do %>❤️<% else %>🖤<% end %>
+              <% end %>
             </p>
-          <% end %>
-        <% end %>
+            <p class="text-yellow-400 text-xs font-bold">{jugador.puntos} pts</p>
+            <p :if={jugador.racha > 0} class="text-orange-300 text-xs">racha x{jugador.racha}</p>
+            <p :if={jugador.escudo_activo} class="text-cyan-300 text-xs">escudo</p>
+
+            <!-- Poderes clickeables -->
+            <div :if={jugador.poderes != []} class="flex justify-center gap-1 mt-1 flex-wrap">
+              <button
+                :for={poder <- jugador.poderes}
+                type="button"
+                disabled={jugador.nombre != @nombre or jugador.nombre != @sala.jugador_con_bomba}
+                phx-click="click_poder"
+                phx-value-poder={poder}
+                class={[
+                  "text-xs px-1.5 py-0.5 rounded border",
+                  jugador.nombre == @nombre and jugador.nombre == @sala.jugador_con_bomba &&
+                    "bg-purple-700 border-purple-400 text-white cursor-pointer hover:bg-purple-600",
+                  not (jugador.nombre == @nombre and jugador.nombre == @sala.jugador_con_bomba) &&
+                    "bg-neutral-800 border-neutral-700 text-neutral-400 cursor-not-allowed"
+                ]}
+                title={nombre_poder(poder)}
+              >
+                {icono_poder(poder)}
+              </button>
+            </div>
+            <p :if={jugador.vidas == 0} class="text-xs text-neutral-500 mt-1">espectador</p>
+          </div>
+        </div>
       </div>
     </div>
     """
   end
+
+  defp fondo_tematica("matematica"), do: "/images/fondo_matematica.png"
+  defp fondo_tematica("cultura_general"), do: "/images/fondo_cultura.jpeg"
+  defp fondo_tematica("programacion"), do: "/images/fondo_programacion.jpeg"
+  defp fondo_tematica(_), do: "/images/fondo_matematica.png"
 
   defp porcentaje_tiempo(restante, pregunta) do
     total = BombPartyQuiz.Preguntas.tiempo_segundos(pregunta)

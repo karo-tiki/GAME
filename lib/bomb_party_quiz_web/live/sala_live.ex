@@ -13,6 +13,8 @@ defmodule BombPartyQuizWeb.SalaLive do
     {:ok, socket |> assign(:codigo, codigo) |> assign(:cargado, false)}
   end
 
+  # Leemos los query params (?nombre=...&anfitrion=true) en handle_params,
+  # que es donde Phoenix LiveView los entrega de forma confiable.
   @impl true
   def handle_params(params, _uri, socket) do
     codigo = socket.assigns.codigo
@@ -30,6 +32,7 @@ defmodule BombPartyQuizWeb.SalaLive do
          |> push_navigate(to: ~p"/")}
 
       true ->
+        # Si NO es el anfitrión, todavía no se ha unido -> lo unimos ahora.
         resultado_union =
           if es_anfitrion do
             {:ok, Sala.estado(codigo)}
@@ -60,9 +63,9 @@ defmodule BombPartyQuizWeb.SalaLive do
     end
   end
 
-  defp mensaje_error(:sala_llena), do: "Esa sala ya esta llena (maximo 4 jugadores)"
-  defp mensaje_error(:nombre_en_uso), do: "Ese nombre ya esta en uso en esta sala"
-  defp mensaje_error(:partida_ya_iniciada), do: "Esa partida ya comenzo"
+  defp mensaje_error("sala_llena"), do: "Esa sala ya está llena (máximo 4 jugadores)"
+  defp mensaje_error("nombre_en_uso"), do: "Ese nombre ya está en uso en esta sala"
+  defp mensaje_error("partida_ya_iniciada"), do: "Esa partida ya comenzó"
   defp mensaje_error(_), do: "No se pudo unir a la sala"
 
   @impl true
@@ -71,17 +74,17 @@ defmodule BombPartyQuizWeb.SalaLive do
       {:ok, _sala} ->
         {:noreply, socket}
 
-      {:error, :faltan_jugadores} ->
+      {:error, "faltan_jugadores"} ->
         {:noreply, put_flash(socket, :error, "Necesitas al menos #{@minimo_jugadores} jugadores")}
     end
   end
 
   @impl true
-  def handle_info({:jugadores_actualizados, sala}, socket) do
+  def handle_info({"jugadores_actualizados", sala}, socket) do
     {:noreply, assign(socket, :sala, sala)}
   end
 
-  def handle_info({:partida_iniciada, sala}, socket) do
+  def handle_info({"partida_iniciada", sala}, socket) do
     nombre = socket.assigns.nombre
     {:noreply, push_navigate(socket, to: ~p"/sala/#{sala.codigo}/jugar?nombre=#{nombre}")}
   end
@@ -94,9 +97,9 @@ defmodule BombPartyQuizWeb.SalaLive do
     <div class="min-h-screen bg-gradient-to-b from-black via-neutral-900 to-red-950 flex items-center justify-center px-4">
       <div class="w-full max-w-md">
         <div class="text-center mb-6">
-          <p class="text-neutral-400 text-sm">Codigo de la sala</p>
+          <p class="text-neutral-400 text-sm">Código de la sala</p>
           <p class="text-4xl font-black text-white font-mono tracking-widest">{@sala.codigo}</p>
-          <p class="text-neutral-500 text-xs mt-1">Compartelo con los demas jugadores</p>
+          <p class="text-neutral-500 text-xs mt-1">Compártelo con los demás jugadores</p>
         </div>
 
         <div class="bg-neutral-900/80 border border-red-900/50 rounded-2xl p-6 shadow-2xl shadow-red-950/50">
@@ -115,15 +118,15 @@ defmodule BombPartyQuizWeb.SalaLive do
               <span class="text-white font-medium">
                 {jugador.nombre}
                 <span :if={jugador.nombre == @sala.anfitrion} class="text-red-400 text-xs ml-1">
-                  (anfitrion)
+                  (anfitrión)
                 </span>
               </span>
-              <span class="text-green-400 text-xs">conectado</span>
+              <span class="text-green-400 text-xs">●conectado</span>
             </li>
           </ul>
 
           <div class="text-center text-sm text-neutral-400 mb-4">
-            Tematica: <span class="text-white font-semibold">{nombre_tematica(@sala.tematica)}</span>
+            Temática: <span class="text-white font-semibold">{nombre_tematica(@sala.tematica)}</span>
           </div>
 
           <%= if @nombre == @sala.anfitrion do %>
@@ -133,14 +136,14 @@ defmodule BombPartyQuizWeb.SalaLive do
               class="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 disabled:bg-neutral-700 disabled:text-neutral-500 text-white font-bold text-lg transition"
             >
               <%= if length(@sala.jugadores) < @minimo do %>
-                Esperando jugadores ({@minimo - length(@sala.jugadores)} mas)
+                Esperando jugadores ({@minimo - length(@sala.jugadores)} más)
               <% else %>
-                Iniciar partida
+                Iniciar partida 💣
               <% end %>
             </button>
           <% else %>
             <p class="text-center text-neutral-400 text-sm">
-              Esperando a que el anfitrion inicie la partida...
+              Esperando a que el anfitrión inicie la partida...
             </p>
           <% end %>
         </div>
@@ -149,10 +152,7 @@ defmodule BombPartyQuizWeb.SalaLive do
     """
   end
 
-  defp nombre_tematica("matematica"), do: "Matematica"
+  defp nombre_tematica("matematica"), do: "Matemática"
   defp nombre_tematica("cultura_general"), do: "Cultura General"
-  defp nombre_tematica("programacion"), do: "Lenguajes de Programacion"
+  defp nombre_tematica("programacion"), do: "Lenguajes de Programación"
 end
-
-
-

@@ -26,8 +26,8 @@ defmodule BombPartyQuiz.Preguntas do
     |> Enum.random()
   end
 
-  def tiempo_segundos(%{"tipo" => "seleccion"}), do: 5
-  def tiempo_segundos(%{"tipo" => "escrita"}), do: 8
+  def tiempo_segundos(%{"tipo" => "seleccion"}), do: 15
+  def tiempo_segundos(%{"tipo" => "escrita"}), do: 30
 
   def respuesta_correcta?(pregunta, respuesta_jugador) do
     normalizar(pregunta["respuesta"]) == normalizar(respuesta_jugador)

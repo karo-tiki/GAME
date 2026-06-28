@@ -2,6 +2,20 @@ defmodule BombPartyQuiz.Sala do
   @moduledoc """
   GenServer que representa UNA sala de juego (una partida).
 
+  Modo de juego: "respuesta libre". Hay UNA pregunta activa a la vez,
+  pero NO esta asignada a un jugador especifico: cualquier jugador con
+  vidas puede intentar responderla en el momento en que crea saber la
+  respuesta. Si falla, pierde una vida y queda "fuera" de esa pregunta
+  (no puede volver a intentarla), pero la pregunta sigue abierta para
+  el resto hasta que alguien acierte, se acabe el tiempo, o ya todos
+  hayan fallado.
+
+  Como el GenServer procesa los mensajes uno a la vez (su buzon es
+  secuencial), aunque varios jugadores respondan "al mismo tiempo"
+  desde procesos distintos, el servidor los ordena de forma segura sin
+  condiciones de carrera: el primer `responder` correcto que llega
+  cierra la pregunta para todos los demas.
+
   Siguiendo el requisito del curso, todos los datos de dominio
   (estado de la sala, nombres de poderes, eventos, mensajes internos
   y mensajes de PubSub) se representan como strings, no como atomos.
@@ -22,22 +36,23 @@ defmodule BombPartyQuiz.Sala do
   @bono_congelar 5
   @pubsub BombPartyQuiz.PubSub
 
-  @poderes_disponibles ["congelar", "robar_puntos", "escudo", "bomba_dirigida"]
+  @poderes_disponibles ["congelar", "robar_puntos", "escudo", "pista"]
 
   defstruct codigo: nil,
             anfitrion: nil,
             tematica: nil,
             jugadores: [],
             estado: "esperando",
-            jugador_con_bomba: nil,
             pregunta_actual: nil,
             tiempo_restante: 0,
+            intentos_fallidos: [],
+            opciones_ocultas: [],
+            letra_revelada: nil,
             ganador: nil,
             temporizador_ref: nil,
             turnos_completados: 0,
             evento_actual: nil,
-            multiplicador_puntos: 1,
-            objetivo_bomba_dirigida: nil
+            multiplicador_puntos: 1
 
   # ============================================================
   # API PÚBLICA
@@ -70,11 +85,12 @@ defmodule BombPartyQuiz.Sala do
     GenServer.call(nombre_proceso(codigo), "iniciar_partida")
   end
 
+  @doc "Cualquier jugador con vidas puede intentar responder la pregunta activa."
   def responder(codigo, nombre_jugador, respuesta) do
     GenServer.call(nombre_proceso(codigo), {"responder", nombre_jugador, respuesta})
   end
 
-  @doc "Activa un poder guardado. `objetivo` se usa solo para robar_puntos y bomba_dirigida."
+  @doc "Activa un poder guardado. `objetivo` se usa solo para robar_puntos."
   def usar_poder(codigo, nombre_jugador, poder, objetivo \\ nil) do
     GenServer.call(nombre_proceso(codigo), {"usar_poder", nombre_jugador, poder, objetivo})
   end
@@ -136,23 +152,34 @@ defmodule BombPartyQuiz.Sala do
   end
 
   def handle_call({"responder", nombre_jugador, respuesta}, _from, sala) do
-    if sala.jugador_con_bomba != nombre_jugador or sala.estado != "jugando" do
-      {:reply, {:error, "no_es_tu_turno"}, sala}
-    else
-      correcta? = Preguntas.respuesta_correcta?(sala.pregunta_actual, respuesta)
-      sala = cancelar_temporizador(sala)
-      sala = procesar_resultado(sala, correcta?)
-      {:reply, {:ok, correcta?}, sala}
+    cond do
+      sala.estado != "jugando" or sala.pregunta_actual == nil ->
+        {:reply, {:error, "no_hay_pregunta_activa"}, sala}
+
+      not puede_responder?(sala, nombre_jugador) ->
+        {:reply, {:error, "no_puedes_responder"}, sala}
+
+      Preguntas.respuesta_correcta?(sala.pregunta_actual, respuesta) ->
+        sala = cancelar_temporizador(sala)
+        sala = procesar_respuesta_correcta(sala, nombre_jugador)
+        {:reply, {:ok, true}, sala}
+
+      true ->
+        sala = procesar_respuesta_incorrecta(sala, nombre_jugador)
+        {:reply, {:ok, false}, sala}
     end
   end
 
   def handle_call({"usar_poder", nombre_jugador, poder, objetivo}, _from, sala) do
     cond do
-      sala.jugador_con_bomba != nombre_jugador ->
-        {:reply, {:error, "no_es_tu_turno"}, sala}
+      not jugador_puede_jugar?(sala, nombre_jugador) ->
+        {:reply, {:error, "no_puedes_usar_poderes"}, sala}
 
       not tiene_poder?(sala, nombre_jugador, poder) ->
         {:reply, {:error, "no_tienes_ese_poder"}, sala}
+
+      poder in ["congelar", "pista"] and sala.pregunta_actual == nil ->
+        {:reply, {:error, "no_hay_pregunta_activa"}, sala}
 
       true ->
         sala = consumir_poder(sala, nombre_jugador, poder)
@@ -176,9 +203,8 @@ defmodule BombPartyQuiz.Sala do
     sala = marcar_sin_vidas(sala, nombre_jugador)
 
     sala =
-      if sala.estado == "jugando" and sala.jugador_con_bomba == nombre_jugador do
-        sala = cancelar_temporizador(sala)
-        procesar_resultado(sala, false)
+      if sala.estado == "jugando" do
+        avanzar_si_nadie_puede_responder(sala)
       else
         verificar_fin_de_partida(sala)
       end
@@ -189,7 +215,7 @@ defmodule BombPartyQuiz.Sala do
 
   @impl true
   def handle_info("tiempo_agotado", sala) do
-    sala = procesar_resultado(sala, false)
+    sala = finalizar_pregunta_sin_ganador(sala)
     {:noreply, sala}
   end
 
@@ -206,49 +232,62 @@ defmodule BombPartyQuiz.Sala do
       racha: 0,
       poderes: [],
       escudo_activo: false,
-      bono_tiempo_propio: 0,
       avatar: "/images/gato#{posicion}.jpeg"
     }
   end
 
   # ============================================================
-  # TURNOS
+  # PREGUNTAS — quien puede responder
+  # ============================================================
+
+  defp jugadores_activos(jugadores) do
+    Enum.filter(jugadores, fn j -> j.vidas > 0 and j.conectado end)
+  end
+
+  # Jugadores que todavia podrian responder la pregunta actual:
+  # estan vivos/conectados Y no han fallado ya en esta pregunta.
+  defp jugadores_disponibles_para_pregunta(sala) do
+    sala.jugadores
+    |> jugadores_activos()
+    |> Enum.reject(fn j -> j.nombre in sala.intentos_fallidos end)
+  end
+
+  defp puede_responder?(sala, nombre_jugador) do
+    case Enum.find(sala.jugadores, &(&1.nombre == nombre_jugador)) do
+      nil -> false
+      jugador -> jugador.vidas > 0 and jugador.conectado and nombre_jugador not in sala.intentos_fallidos
+    end
+  end
+
+  defp jugador_puede_jugar?(sala, nombre_jugador) do
+    case Enum.find(sala.jugadores, &(&1.nombre == nombre_jugador)) do
+      nil -> false
+      jugador -> jugador.vidas > 0 and jugador.conectado
+    end
+  end
+
+  # ============================================================
+  # TURNOS (cada turno = una pregunta abierta a todos)
   # ============================================================
 
   defp iniciar_turno(sala) do
-    # Si alguien activo "bomba dirigida" en el turno anterior, ese jugador
-    # ya quedo fijado como objetivo_bomba_dirigida; si no, se elige al azar.
-    jugador_elegido_nombre =
-      sala.objetivo_bomba_dirigida ||
-        (sala.jugadores
-         |> jugadores_activos()
-         |> Enum.random()
-         |> Map.get(:nombre))
-
     pregunta = Preguntas.aleatoria(sala.tematica)
-    segundos_base = Preguntas.tiempo_segundos(pregunta)
-
-    bono = obtener_bono_tiempo(sala, jugador_elegido_nombre)
-    segundos = segundos_base + bono
+    segundos = Preguntas.tiempo_segundos(pregunta)
 
     ref = Process.send_after(self(), "tiempo_agotado", segundos * 1000)
 
     sala = %{
       sala
-      | jugador_con_bomba: jugador_elegido_nombre,
-        pregunta_actual: pregunta,
+      | pregunta_actual: pregunta,
         tiempo_restante: segundos,
         temporizador_ref: ref,
-        objetivo_bomba_dirigida: nil
+        intentos_fallidos: [],
+        opciones_ocultas: [],
+        letra_revelada: nil
     }
-    |> limpiar_bono_tiempo(jugador_elegido_nombre)
 
     anunciar(sala, {"nuevo_turno", sala})
     sala
-  end
-
-  defp jugadores_activos(jugadores) do
-    Enum.filter(jugadores, fn j -> j.vidas > 0 and j.conectado end)
   end
 
   defp cancelar_temporizador(sala) do
@@ -256,35 +295,30 @@ defmodule BombPartyQuiz.Sala do
     %{sala | temporizador_ref: nil}
   end
 
-  defp obtener_bono_tiempo(sala, nombre_jugador) do
-    case Enum.find(sala.jugadores, &(&1.nombre == nombre_jugador)) do
-      nil -> 0
-      jugador -> jugador.bono_tiempo_propio
-    end
-  end
+  # Si tras una desconexion ya no queda nadie que pueda intentar la
+  # pregunta activa, se cierra esa pregunta sin ganador y se avanza.
+  defp avanzar_si_nadie_puede_responder(sala) do
+    sala = verificar_fin_de_partida(sala)
 
-  defp limpiar_bono_tiempo(sala, nombre_jugador) do
-    actualizar_jugador(sala, nombre_jugador, fn j -> %{j | bono_tiempo_propio: 0} end)
+    if sala.estado == "jugando" and sala.pregunta_actual != nil and
+         jugadores_disponibles_para_pregunta(sala) == [] do
+      finalizar_pregunta_sin_ganador(sala)
+    else
+      sala
+    end
   end
 
   # ============================================================
   # RESULTADO DE UNA RESPUESTA
   # ============================================================
 
-  defp procesar_resultado(sala, correcta?) do
-    nombre = sala.jugador_con_bomba
-
+  defp procesar_respuesta_correcta(sala, nombre_jugador) do
     sala =
-      if correcta? do
-        sala
-        |> sumar_puntos(nombre)
-        |> sumar_racha(nombre)
-        |> tap_anunciar({"respuesta_correcta", nombre})
-      else
-        sala
-        |> aplicar_falla(nombre)
-        |> tap_anunciar_sala({"respuesta_incorrecta", nombre})
-      end
+      sala
+      |> sumar_puntos(nombre_jugador)
+      |> sumar_racha(nombre_jugador)
+
+    anunciar(sala, {"respuesta_correcta", nombre_jugador})
 
     sala = incrementar_turnos(sala)
     sala = verificar_fin_de_partida(sala)
@@ -296,14 +330,39 @@ defmodule BombPartyQuiz.Sala do
     end
   end
 
-  defp tap_anunciar(sala, mensaje) do
-    anunciar(sala, mensaje)
-    sala
+  # Un jugador fallo: pierde vida (salvo que tenga escudo) y queda
+  # fuera de esta pregunta, pero la pregunta sigue abierta para los
+  # demas hasta que alguien acierte, se acabe el tiempo, o ya todos
+  # hayan fallado tambien.
+  defp procesar_respuesta_incorrecta(sala, nombre_jugador) do
+    sala =
+      sala
+      |> aplicar_falla(nombre_jugador)
+      |> registrar_intento_fallido(nombre_jugador)
+
+    anunciar(sala, {"respuesta_incorrecta", nombre_jugador, sala})
+
+    if jugadores_disponibles_para_pregunta(sala) == [] do
+      finalizar_pregunta_sin_ganador(sala)
+    else
+      sala
+    end
   end
 
-  defp tap_anunciar_sala(sala, {tipo, nombre}) do
-    anunciar(sala, {tipo, nombre, sala})
-    sala
+  defp finalizar_pregunta_sin_ganador(sala) do
+    sala = cancelar_temporizador(sala)
+    sala = incrementar_turnos(sala)
+    sala = verificar_fin_de_partida(sala)
+
+    if sala.estado == "jugando" do
+      iniciar_turno(sala)
+    else
+      sala
+    end
+  end
+
+  defp registrar_intento_fallido(sala, nombre_jugador) do
+    %{sala | intentos_fallidos: [nombre_jugador | sala.intentos_fallidos]}
   end
 
   defp sumar_puntos(sala, nombre_jugador) do
@@ -380,23 +439,19 @@ defmodule BombPartyQuiz.Sala do
     end)
   end
 
-  # congelar: efecto inmediato. Si lo usa el jugador que tiene la bomba en
-  # este momento, se le agregan 5 segundos AL TEMPORIZADOR QUE YA ESTA
-  # CORRIENDO: se cancela el timer actual y se reprograma con el tiempo
-  # restante + el bono, y se avisa a las pantallas del nuevo tiempo.
+  # congelar: efecto inmediato sobre el reloj COMPARTIDO de la pregunta
+  # activa (le da mas tiempo a todos los que aun pueden responder, no
+  # solo a quien lo usa). Se cancela el timer actual y se reprograma
+  # con el tiempo restante + el bono.
   defp aplicar_poder(sala, nombre_jugador, "congelar", _objetivo) do
-    if sala.jugador_con_bomba == nombre_jugador do
-      sala = cancelar_temporizador(sala)
-      nuevo_tiempo = sala.tiempo_restante + @bono_congelar
+    sala = cancelar_temporizador(sala)
+    nuevo_tiempo = sala.tiempo_restante + @bono_congelar
 
-      ref = Process.send_after(self(), "tiempo_agotado", nuevo_tiempo * 1000)
+    ref = Process.send_after(self(), "tiempo_agotado", nuevo_tiempo * 1000)
 
-      sala = %{sala | tiempo_restante: nuevo_tiempo, temporizador_ref: ref}
-      anunciar(sala, {"tiempo_extendido", nombre_jugador, sala})
-      sala
-    else
-      sala
-    end
+    sala = %{sala | tiempo_restante: nuevo_tiempo, temporizador_ref: ref}
+    anunciar(sala, {"tiempo_extendido", nombre_jugador, sala})
+    sala
   end
 
   # robar_puntos: quita puntos al objetivo elegido y se los suma a quien usa el poder.
@@ -413,13 +468,34 @@ defmodule BombPartyQuiz.Sala do
     actualizar_jugador(sala, nombre_jugador, fn j -> %{j | escudo_activo: true} end)
   end
 
-  # bomba_dirigida: si responde correctamente este turno, el o ella decide
-  # a quien le pasa la bomba en vez de elegir al azar.
-  defp aplicar_poder(sala, _nombre_jugador, "bomba_dirigida", objetivo) when is_binary(objetivo) do
-    %{sala | objetivo_bomba_dirigida: objetivo}
+  # pista: ayuda visible para TODOS sobre la pregunta activa. Si es de
+  # seleccion, oculta una opcion incorrecta; si es escrita, revela la
+  # primera letra de la respuesta.
+  defp aplicar_poder(sala, _nombre_jugador, "pista", _objetivo) do
+    pregunta = sala.pregunta_actual
+
+    case pregunta && pregunta["tipo"] do
+      "seleccion" -> ocultar_opcion_incorrecta(sala, pregunta)
+      "escrita" -> revelar_primera_letra(sala, pregunta)
+      _ -> sala
+    end
   end
 
-  defp aplicar_poder(sala, _nombre_jugador, "bomba_dirigida", _objetivo), do: sala
+  defp ocultar_opcion_incorrecta(sala, pregunta) do
+    candidatas =
+      pregunta["opciones"]
+      |> Enum.reject(&(&1 == pregunta["respuesta"]))
+      |> Enum.reject(&(&1 in sala.opciones_ocultas))
+
+    case candidatas do
+      [] -> sala
+      _ -> %{sala | opciones_ocultas: [Enum.random(candidatas) | sala.opciones_ocultas]}
+    end
+  end
+
+  defp revelar_primera_letra(sala, pregunta) do
+    %{sala | letra_revelada: String.first(pregunta["respuesta"])}
+  end
 
   # ============================================================
   # EVENTOS ALEATORIOS DE RONDA (cada @turnos_por_evento turnos)
@@ -465,7 +541,6 @@ defmodule BombPartyQuiz.Sala do
           sala
           | estado: "finalizado",
             ganador: unico_ganador.nombre,
-            jugador_con_bomba: nil,
             pregunta_actual: nil
         }
 
@@ -473,7 +548,7 @@ defmodule BombPartyQuiz.Sala do
         sala
 
       [] ->
-        sala = %{sala | estado: "finalizado", ganador: nil, jugador_con_bomba: nil}
+        sala = %{sala | estado: "finalizado", ganador: nil}
         anunciar(sala, {"partida_finalizada", sala})
         sala
 

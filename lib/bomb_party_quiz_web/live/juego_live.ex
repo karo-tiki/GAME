@@ -84,6 +84,16 @@ defmodule BombPartyQuizWeb.JuegoLive do
     {:noreply, assign(socket, :poder_seleccionado, nil)}
   end
 
+  def handle_event("comprar_vida", _params, socket) do
+    case Sala.comprar_vida(socket.assigns.codigo, socket.assigns.nombre) do
+      {:ok, _sala} ->
+        {:noreply, socket}
+
+      {:error, motivo} ->
+        {:noreply, put_flash(socket, :error, mensaje_error_revivir(motivo))}
+    end
+  end
+
   defp enviar_respuesta(socket, respuesta) do
     Sala.responder(socket.assigns.codigo, socket.assigns.nombre, respuesta)
     {:noreply, assign(socket, :respuesta, "")}
@@ -116,8 +126,25 @@ defmodule BombPartyQuizWeb.JuegoLive do
      |> assign(:flash_resultado, {"incorrecta", jugador})}
   end
 
+  def handle_info({"bomba_fallo", jugador, sala}, socket) do
+    {:noreply,
+     socket
+     |> assign(:sala, sala)
+     |> assign(:flash_resultado, {"bomba_fallo", jugador})}
+  end
+
   def handle_info({"jugadores_actualizados", sala}, socket) do
     {:noreply, assign(socket, :sala, sala)}
+  end
+
+  def handle_info({"jugador_revivio", jugador, sala}, socket) do
+    mensaje = "#{jugador} compro una vida de vuelta"
+
+    {:noreply,
+     socket
+     |> assign(:sala, sala)
+     |> assign(:tiempo_restante, sala.tiempo_restante)
+     |> assign(:flash_resultado, {"poder_usado", mensaje})}
   end
 
   def handle_info({"partida_finalizada", sala}, socket) do
@@ -194,7 +221,9 @@ defmodule BombPartyQuizWeb.JuegoLive do
       assigns
       |> assign(:puede_responder, puede_responder?(assigns.sala, assigns.nombre))
       |> assign(:ya_fallo, assigns.nombre in assigns.sala.intentos_fallidos)
-      |> assign(:opciones_visibles, opciones_visibles(assigns.sala))
+      |> assign(:opciones_visibles, opciones_visibles(assigns.sala, assigns.nombre))
+      |> assign(:puede_comprar_vida, puede_comprar_vida?(assigns.sala, assigns.nombre))
+      |> assign(:costo_revivir, Sala.costo_revivir())
 
     ~H"""
     <div class="relative w-full overflow-hidden"
@@ -223,6 +252,10 @@ defmodule BombPartyQuizWeb.JuegoLive do
                 <p class="text-red-300 font-bold text-center text-sm drop-shadow">
                   {jugador} fallo y perdio una vida
                 </p>
+              <% {"bomba_fallo", jugador} -> %>
+                <p class="text-red-400 font-black text-center text-sm drop-shadow animate-pulse">
+                  💥 {jugador} fallo la bomba dirigida: perdio TODAS sus vidas y puntos
+                </p>
               <% {"poder_ganado", mensaje} -> %>
                 <p class="text-purple-200 font-bold text-center text-sm drop-shadow">{mensaje}</p>
               <% {"poder_usado", mensaje} -> %>
@@ -232,12 +265,22 @@ defmodule BombPartyQuizWeb.JuegoLive do
 
           <%= if @sala.pregunta_actual do %>
             <!-- Quien puede responder -->
-            <p class="text-green-200/80 text-xs mb-1 drop-shadow text-center">
-              Quien sepa la respuesta, ¡que responda primero!
-            </p>
+            <%= if @sala.objetivo_bomba do %>
+              <p class="text-red-300 text-xs mb-1 drop-shadow text-center font-bold">
+                🎯 Bomba dirigida a <span class="underline">{@sala.objetivo_bomba}</span>:
+                si falla pierde TODAS sus vidas y puntos
+              </p>
+              <p :if={@sala.objetivo_bomba == @nombre} class="text-yellow-200 text-xs mb-1 drop-shadow text-center">
+                Si aciertas, ganas el doble de puntos
+              </p>
+            <% else %>
+              <p class="text-green-200/80 text-xs mb-1 drop-shadow text-center">
+                Quien sepa la respuesta, ¡que responda primero!
+              </p>
+            <% end %>
 
             <!-- Pista activa (si alguien la uso) -->
-            <p :if={@sala.letra_revelada} class="text-cyan-200 text-xs mb-1 drop-shadow">
+            <p :if={@sala.letra_revelada && @nombre in @sala.beneficiarios_pista} class="text-cyan-200 text-xs mb-1 drop-shadow">
               Pista: empieza con "{@sala.letra_revelada}"
             </p>
 
@@ -296,15 +339,63 @@ defmodule BombPartyQuizWeb.JuegoLive do
                     Enviar
                   </button>
                 </form>
+              <% @sala.objetivo_bomba != nil and @puede_comprar_vida -> %>
+                <p class="text-orange-200/90 text-sm text-center drop-shadow mb-2">
+                  Le toca a {@sala.objetivo_bomba}, espera el resultado
+                </p>
+                <button
+                  phx-click="comprar_vida"
+                  class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-bold text-sm transition"
+                >
+                  Comprar vida ({@costo_revivir} pts)
+                </button>
+              <% @sala.objetivo_bomba != nil -> %>
+                <p class="text-orange-200/90 text-sm text-center drop-shadow">
+                  Le toca a {@sala.objetivo_bomba}, espera el resultado
+                </p>
+              <% @ya_fallo and @puede_comprar_vida -> %>
+                <p class="text-red-300/80 text-sm text-center drop-shadow mb-2">
+                  Ya fallaste esta pregunta, espera la siguiente
+                </p>
+                <button
+                  phx-click="comprar_vida"
+                  class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-bold text-sm transition"
+                >
+                  Comprar vida ({@costo_revivir} pts)
+                </button>
               <% @ya_fallo -> %>
                 <p class="text-red-300/80 text-sm text-center drop-shadow">
                   Ya fallaste esta pregunta, espera la siguiente
                 </p>
+              <% @puede_comprar_vida -> %>
+                <p class="text-green-200/70 text-sm text-center drop-shadow mb-2">
+                  Eres espectador
+                </p>
+                <button
+                  phx-click="comprar_vida"
+                  class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-bold text-sm transition"
+                >
+                  Comprar vida ({@costo_revivir} pts)
+                </button>
               <% true -> %>
                 <p class="text-green-200/70 text-sm text-center drop-shadow">
                   Eres espectador, espera a la siguiente partida
                 </p>
             <% end %>
+          <% else %>
+            <!-- La partida sigue, pero nadie con vidas puede jugar ahora:
+                 esta en pausa esperando a que algun eliminado decida
+                 comprar su vida de vuelta. -->
+            <p class="text-orange-200 text-center text-sm drop-shadow mb-3">
+              La partida esta en pausa: nadie tiene vidas para responder
+            </p>
+            <button
+              :if={@puede_comprar_vida}
+              phx-click="comprar_vida"
+              class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-bold text-sm transition"
+            >
+              Comprar vida ({@costo_revivir} pts) y continuar
+            </button>
           <% end %>
         </div>
       </div>
@@ -338,8 +429,12 @@ defmodule BombPartyQuizWeb.JuegoLive do
             :for={jugador <- @sala.jugadores}
             class={[
               "rounded-2xl p-2 text-center border-2 transition",
-              jugador.vidas > 0 and jugador.nombre not in @sala.intentos_fallidos && "border-orange-400 bg-orange-900/60",
-              (jugador.vidas == 0 or jugador.nombre in @sala.intentos_fallidos) && "border-neutral-700/50 bg-neutral-900/60",
+              @sala.objetivo_bomba == jugador.nombre && "border-red-500 bg-red-900/70 ring-2 ring-red-400",
+              @sala.objetivo_bomba != jugador.nombre and jugador.vidas > 0 and
+                jugador.nombre not in @sala.intentos_fallidos && "border-orange-400 bg-orange-900/60",
+              @sala.objetivo_bomba != jugador.nombre and
+                (jugador.vidas == 0 or jugador.nombre in @sala.intentos_fallidos) &&
+                "border-neutral-700/50 bg-neutral-900/60",
               jugador.vidas == 0 && "opacity-40"
             ]}
           >
@@ -349,7 +444,9 @@ defmodule BombPartyQuizWeb.JuegoLive do
                 alt={jugador.nombre}
                 class="w-12 h-12 rounded-full object-cover mx-auto border-2 border-white/20"
               />
-              <span :if={jugador.vidas > 0 and jugador.nombre not in @sala.intentos_fallidos}
+              <span :if={@sala.objetivo_bomba == jugador.nombre}
+                class="absolute -top-1 -right-1 text-sm">🎯</span>
+              <span :if={@sala.objetivo_bomba != jugador.nombre and jugador.vidas > 0 and jugador.nombre not in @sala.intentos_fallidos}
                 class="absolute -top-1 -right-1 text-sm">💣</span>
             </div>
             <p class="text-white font-semibold text-xs truncate mt-1">{jugador.nombre}</p>
@@ -383,6 +480,11 @@ defmodule BombPartyQuizWeb.JuegoLive do
               </button>
             </div>
             <p :if={jugador.vidas == 0} class="text-xs text-neutral-500 mt-1">espectador</p>
+            <p :if={jugador.vidas == 0 and jugador.puntos >= @costo_revivir and not jugador.revivio_usado}
+              class="text-xs text-pink-300 mt-0.5">puede revivir</p>
+            <p :if={jugador.vidas == 0 and jugador.revivio_usado} class="text-xs text-neutral-600 mt-0.5">
+              ya revivio una vez
+            </p>
           </div>
         </div>
       </div>
@@ -406,17 +508,38 @@ defmodule BombPartyQuizWeb.JuegoLive do
 
   defp puede_responder?(sala, nombre_propio) do
     case Enum.find(sala.jugadores, &(&1.nombre == nombre_propio)) do
-      nil -> false
-      jugador -> jugador.vidas > 0 and nombre_propio not in sala.intentos_fallidos
+      nil ->
+        false
+
+      jugador ->
+        if sala.objetivo_bomba != nil do
+          nombre_propio == sala.objetivo_bomba and jugador.vidas > 0
+        else
+          jugador.vidas > 0 and nombre_propio not in sala.intentos_fallidos
+        end
     end
   end
 
-  defp opciones_visibles(%{pregunta_actual: nil}), do: []
+  defp puede_comprar_vida?(sala, nombre_propio) do
+    case Enum.find(sala.jugadores, &(&1.nombre == nombre_propio)) do
+      nil -> false
+      jugador -> jugador.vidas == 0 and not jugador.revivio_usado and jugador.puntos >= Sala.costo_revivir()
+    end
+  end
 
-  defp opciones_visibles(sala) do
+  defp opciones_visibles(%{pregunta_actual: nil}, _nombre_propio), do: []
+
+  defp opciones_visibles(sala, nombre_propio) do
     case sala.pregunta_actual["opciones"] do
-      nil -> []
-      opciones -> Enum.reject(opciones, &(&1 in sala.opciones_ocultas))
+      nil ->
+        []
+
+      opciones ->
+        if nombre_propio in sala.beneficiarios_pista do
+          Enum.reject(opciones, &(&1 in sala.opciones_ocultas))
+        else
+          opciones
+        end
     end
   end
 
@@ -434,4 +557,9 @@ defmodule BombPartyQuizWeb.JuegoLive do
 
   defp texto_evento("doble_puntos"), do: "Evento: Puntos dobles esta ronda"
   defp texto_evento("ronda_relampago"), do: "Evento: Ronda relampago"
+
+  defp mensaje_error_revivir("puntos_insuficientes"), do: "No tienes suficientes puntos para revivir"
+  defp mensaje_error_revivir("ya_usaste_tu_revivir"), do: "Ya usaste tu unica oportunidad de revivir"
+  defp mensaje_error_revivir("no_estas_eliminado"), do: "No estas eliminado"
+  defp mensaje_error_revivir(_), do: "No se pudo comprar la vida"
 end
